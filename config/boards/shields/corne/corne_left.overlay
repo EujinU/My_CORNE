@@ -10,7 +10,7 @@
     chosen {
         zmk,kscan = &kscan0;
         zmk,matrix_transform = &default_transform;
-        zmk,encoder = &encoder_left;
+        zmk,encoder = &encoder_left; // Указываем на узел ЛЕВОГО энкодера
     };
 
     default_transform: keymap_transform_0 {
@@ -45,11 +45,11 @@
             ;
     };
 
-    encoder_left: encoder_left {
+    encoder_left: encoder_left { // Узел ЛЕВОГО энкодера
         compatible = "alps,ec11";
-        label = "LEFT_ENCODER";
-        a-gpios = <&gpio1  1 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; // Пин A левого энкодера
-        b-gpios = <&gpio1  2 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; // Пин B левого энкодера
+        label = "LEFT_ENCODER"; // Лейбл ЛЕВОГО энкодера
+        a-gpios = <&gpio1  1 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; // Пин A для левого энкодера (gpio1.01)
+        b-gpios = <&gpio1  2 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; // Пин B для левого энкодера (gpio1.02)
         steps = <24>;
         status = "okay";
     };
