@@ -1,0 +1,14 @@
+# This file generates the GitHub Actions matrix
+---
+include:
+  # 1. Левая половина (центральная / master)
+  - board: nice_nano_v2
+    shield: corne_left
+
+  # 2. Правая половина (периферийная / slave)
+  - board: nice_nano_v2
+    shield: corne_right
+
+  # 3. Прошивка для сброса настроек (Bond Clear) - ОТДЕЛЬНЫЙ ЭЛЕМЕНТ СПИСКА
+  - board: nice_nano_v2
+    shield: settings_reset
