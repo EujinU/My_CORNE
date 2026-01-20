@@ -70,7 +70,7 @@ jobs:
       
       - name: West Update (Force Latest)
         run: |
-          west update --n=zephyr --n=zmk --fetch=always
+          west update -n zephyr -n zmk --fetch=always
       
       - name: West Update
         run: west update
