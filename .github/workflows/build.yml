@@ -15,64 +15,99 @@ jobs:
       - name: Prepare and Build
         id: build
         run: |
+          # Инициализация ZMK
           west init -l config
           west update
           west zephyr-export
+          
+          # Чтение конфигурации из build.yaml
           MATRIX_JSON=$(python3 -c "import yaml, json, sys; print(json.dumps(yaml.safe_load(sys.stdin)['include']))" < build.yaml)
+          
+          # Переменная для хранения путей к артефактам
+          ARTIFACT_PATHS=""
+          
           echo "$MATRIX_JSON" | jq -c '.[]' | while read -r TARGET; do
             BOARD=$(echo "$TARGET" | jq -r '.board')
             SHIELD=$(echo "$TARGET" | jq -r '.shield // ""')
             KEYMAP=$(echo "$TARGET" | jq -r '.keymap // ""')
             
-            # Создаем имя директории для сборки
-            BUILD_DIR="build"
+            # Создаем уникальное имя для директории сборки
+            BUILD_DIR_NAME="build_${BOARD}"
             if [ -n "$SHIELD" ]; then
-              BUILD_DIR="${BUILD_DIR}_${BOARD}_${SHIELD}"
-              if [ -n "$KEYMAP" ]; then
-                BUILD_DIR="${BUILD_DIR}_${KEYMAP}"
-              fi
-            else
-              BUILD_DIR="${BUILD_DIR}_${BOARD}"
+              BUILD_DIR_NAME="${BUILD_DIR_NAME}_${SHIELD}"
+            fi
+            if [ -n "$KEYMAP" ] && [ "$KEYMAP" != "default" ]; then
+              BUILD_DIR_NAME="${BUILD_DIR_NAME}_${KEYMAP}"
             fi
             
-            CMD="west build -s zmk/app -b $BOARD --build-dir $BUILD_DIR -- -DZMK_CONFIG=$(pwd)/config"
+            echo "🔧 Сборка: BOARD=$BOARD, SHIELD=$SHIELD, KEYMAP=$KEYMAP"
+            echo "📁 Директория сборки: $BUILD_DIR_NAME"
+            
+            # Команда сборки
+            CMD="west build -s zmk/app -b $BOARD --build-dir $BUILD_DIR_NAME -- -DZMK_CONFIG=$(pwd)/config"
             [ -n "$SHIELD" ] && CMD="$CMD -DSHIELD=$SHIELD"
             [ -n "$KEYMAP" ] && CMD="$CMD -DKEYMAP=$KEYMAP"
             
-            echo "🚀 Сборка: $CMD"
+            echo "🚀 Выполняем: $CMD"
             eval $CMD
             
-            # Копируем файлы прошивки в удобное место
-            if [ -f "$BUILD_DIR/zephyr/zmk.uf2" ]; then
-              cp "$BUILD_DIR/zephyr/zmk.uf2" "firmware_${BOARD}_${SHIELD}_${KEYMAP}.uf2"
-              echo "✅ UF2 файл создан"
-            fi
-            if [ -f "$BUILD_DIR/zephyr/zmk.hex" ]; then
-              cp "$BUILD_DIR/zephyr/zmk.hex" "firmware_${BOARD}_${SHIELD}_${KEYMAP}.hex"
-              echo "✅ HEX файл создан"
-            fi
-            if [ -f "$BUILD_DIR/zephyr/zmk.bin" ]; then
-              cp "$BUILD_DIR/zephyr/zmk.bin" "firmware_${BOARD}_${SHIELD}_${KEYMAP}.bin"
-              echo "✅ BIN файл создан"
-            fi
+            # Проверяем созданные файлы
+            echo "📋 Содержимое $BUILD_DIR_NAME/zephyr/:"
+            ls -la "$BUILD_DIR_NAME/zephyr/" || echo "Директория не найдена"
+            
+            # Ищем файлы прошивки
+            for ext in uf2 hex bin; do
+              FIRMWARE_FILE="$BUILD_DIR_NAME/zephyr/zmk.$ext"
+              if [ -f "$FIRMWARE_FILE" ]; then
+                echo "✅ Найден файл прошивки: $FIRMWARE_FILE"
+                # Копируем с понятным именем
+                OUTPUT_NAME="firmware_${BOARD}"
+                [ -n "$SHIELD" ] && OUTPUT_NAME="${OUTPUT_NAME}_${SHIELD}"
+                [ -n "$KEYMAP" ] && OUTPUT_NAME="${OUTPUT_NAME}_${KEYMAP}"
+                OUTPUT_NAME="${OUTPUT_NAME}.$ext"
+                
+                cp "$FIRMWARE_FILE" "$OUTPUT_NAME"
+                echo "📄 Скопирован как: $OUTPUT_NAME"
+                ARTIFACT_PATHS="$ARTIFACT_PATHS $OUTPUT_NAME"
+              fi
+            done
+            
+            echo "---"
           done
           
-          # Создаем список собранных файлов
-          ls -la firmware_* 2>/dev/null || echo "Файлы прошивки не найдены"
+          # Выводим список всех созданных файлов
+          echo "📦 Итоговые файлы прошивки:"
+          ls -la firmware_* 2>/dev/null || echo "⚠️ Файлы прошивки не найдены"
           
-          # Сохраняем список файлов для следующего шага
-          echo "firmware_files=$(ls firmware_* 2>/dev/null | tr '\n' ' ')" >> $GITHUB_OUTPUT
+          # Сохраняем список для отладки
+          echo "ARTIFACTS_FOUND=$(ls firmware_* 2>/dev/null | wc -l)" >> $GITHUB_ENV
+
+      - name: Debug - List All Files
+        run: |
+          echo "📁 Содержимое рабочей директории:"
+          find . -type f -name "*.uf2" -o -name "*.hex" -o -name "*.bin" | head -20
+          echo ""
+          echo "📁 Содержимое корня:"
+          ls -la
+          echo ""
+          echo "📁 Содержимое с build:"
+          find . -type d -name "build_*" | head -5
 
       - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
+        if: env.ARTIFACTS_FOUND > 0
         with:
-          name: firmware
+          name: zmk-firmware
           path: |
             firmware_*
-            build_*/zephyr/zmk.*
-          retention-days: 7
+          retention-days: 90
 
-      - name: List Artifacts
-        run: |
-          echo "Собранные файлы:"
-          ls -la firmware_* 2>/dev/null || echo "Файлы прошивки не найдены"
+      - name: Upload Build Logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-logs
+          path: |
+            build_*/zephyr/.config
+            build_*/build.log
+          retention-days: 7
