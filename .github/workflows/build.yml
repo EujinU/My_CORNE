@@ -68,6 +68,10 @@ jobs:
       - name: West Init
         run: west init -l config
       
+      - name: West Update (Force Latest)
+        run: |
+          west update --n=zephyr --n=zmk --fetch=always
+      
       - name: West Update
         run: west update
       
