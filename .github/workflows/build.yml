@@ -4,7 +4,6 @@ on: [push, pull_request, workflow_dispatch]
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Используем актуальный стабильный образ от ZMK
     container:
       image: zmkfirmware/zmk-build-arm:stable
     name: Build Firmware
@@ -13,28 +12,31 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          path: 'my-config' # Клонируем репозиторий в подпапку
+          path: 'my-config'
 
-      - name: Prepare and Build
+      - name: Prepare Workspace
         run: |
-          # Переходим в каталог клонированного репозитория
           cd my-config
-          # Используем стандартную команду сборки ZMK
-          # Она автоматически найдет config/ и build.yaml
           west init -l config
           west update
           west zephyr-export
-          # Собираем все цели из build.yaml
-          python3 -c "
-import yaml, subprocess, sys
+
+      - name: Build Firmware
+        run: |
+          cd my-config
+          # Прочитаем build.yaml и построим команды для каждой цели
+          BUILD_TARGETS=$(python3 -c "
+import yaml, sys
 with open('build.yaml') as f:
-    matrix = yaml.safe_load(f)['include']
-for item in matrix:
-    board = item['board']
-    shield = item.get('shield', '')
-    args = ['west', 'build', '-s', 'zmk/app', '-b', board, '--', '-DZMK_CONFIG=$(pwd)/config']
-    if shield:
-        args.append('-DSHIELD=' + shield)
-    print(' '.join(args))
-    subprocess.run(args, check=True)
-          "
+    data = yaml.safe_load(f)
+for target in data.get('include', []):
+    cmd = 'west build -s zmk/app -b {} -- -DZMK_CONFIG=$(pwd)/config'.format(target['board'])
+    if 'shield' in target:
+        cmd += ' -DSHIELD={}'.format(target['shield'])
+    print(cmd)
+          ")
+          # Выполним каждую команду сборки
+          while IFS= read -r cmd; do
+            echo "🚀 Выполняю: $cmd"
+            eval $cmd
+          done <<< "$BUILD_TARGETS"
