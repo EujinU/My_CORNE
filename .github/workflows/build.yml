@@ -3,4 +3,16 @@ on: [push, pull_request, workflow_dispatch]
 
 jobs:
   build:
-    uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@main
+    runs-on: ubuntu-latest
+    # Используем самый актуальный стабильный образ от ZMK
+    container:
+      image: zmkfirmware/zmk-build-arm:stable
+    name: Build Firmware
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build
+        # Используем официальный Action для сборки, который теперь будет работать в нашем контейнере
+        uses: zmkfirmware/zmk/.github/actions/build-user-config@main
