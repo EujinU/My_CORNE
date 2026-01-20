@@ -11,32 +11,31 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          path: 'my-config'
 
-      - name: Prepare Workspace
+      - name: Prepare and Build
         run: |
-          cd my-config
+          # 1. Инициализация workspace ZMK
           west init -l config
           west update
           west zephyr-export
 
-      - name: Build Firmware
-        run: |
-          cd my-config
-          # Прочитаем build.yaml и построим команды для каждой цели
-          BUILD_TARGETS=$(python3 -c "
-import yaml, sys
-with open('build.yaml') as f:
-    data = yaml.safe_load(f)
-for target in data.get('include', []):
-    cmd = 'west build -s zmk/app -b {} -- -DZMK_CONFIG=$(pwd)/config'.format(target['board'])
-    if 'shield' in target:
-        cmd += ' -DSHIELD={}'.format(target['shield'])
-    print(cmd)
-          ")
-          # Выполним каждую команду сборки
-          while IFS= read -r cmd; do
-            echo "🚀 Выполняю: $cmd"
-            eval $cmd
-          done <<< "$BUILD_TARGETS"
+          # 2. Чтение build.yaml и сборка каждой цели
+          # Преобразуем YAML в JSON для простоты обработки в bash/jq
+          MATRIX_JSON=$(python3 -c "import yaml, json, sys; print(json.dumps(yaml.safe_load(sys.stdin)['include']))" < build.yaml)
+
+          # 3. Обработка каждой цели сборки с помощью jq (если нет jq, можно использовать python)
+          # Устанавливаем jq, если его нет в образе (обычно он есть)
+          if ! command -v jq &> /dev/null; then apt-get update && apt-get install -y jq; fi
+
+          echo "$MATRIX_JSON" | jq -c '.[]' | while read -r TARGET; do
+            BOARD=$(echo "$TARGET" | jq -r '.board')
+            SHIELD=$(echo "$TARGET" | jq -r '.shield // ""')
+
+            CMD="west build -s zmk/app -b $BOARD -- -DZMK_CONFIG=$(pwd)/config"
+            if [ -n "$SHIELD" ]; then
+              CMD="$CMD -DSHIELD=$SHIELD"
+            fi
+
+            echo "🚀 Сборка: $CMD"
+            eval $CMD
+          done
