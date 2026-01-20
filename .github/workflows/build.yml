@@ -5,7 +5,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: zmkfirmware/zmk-build-arm:3.5  # <- Используем конкретную, более новую версию
+      image: zmkfirmware/zmk-build-arm:3.5
     name: Build Firmware
 
     steps:
@@ -13,6 +13,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Prepare and Build
+        id: build
         run: |
           west init -l config
           west update
@@ -21,8 +22,57 @@ jobs:
           echo "$MATRIX_JSON" | jq -c '.[]' | while read -r TARGET; do
             BOARD=$(echo "$TARGET" | jq -r '.board')
             SHIELD=$(echo "$TARGET" | jq -r '.shield // ""')
-            CMD="west build -s zmk/app -b $BOARD -- -DZMK_CONFIG=$(pwd)/config"
+            KEYMAP=$(echo "$TARGET" | jq -r '.keymap // ""')
+            
+            # Создаем имя директории для сборки
+            BUILD_DIR="build"
+            if [ -n "$SHIELD" ]; then
+              BUILD_DIR="${BUILD_DIR}_${BOARD}_${SHIELD}"
+              if [ -n "$KEYMAP" ]; then
+                BUILD_DIR="${BUILD_DIR}_${KEYMAP}"
+              fi
+            else
+              BUILD_DIR="${BUILD_DIR}_${BOARD}"
+            fi
+            
+            CMD="west build -s zmk/app -b $BOARD --build-dir $BUILD_DIR -- -DZMK_CONFIG=$(pwd)/config"
             [ -n "$SHIELD" ] && CMD="$CMD -DSHIELD=$SHIELD"
+            [ -n "$KEYMAP" ] && CMD="$CMD -DKEYMAP=$KEYMAP"
+            
             echo "🚀 Сборка: $CMD"
             eval $CMD
+            
+            # Копируем файлы прошивки в удобное место
+            if [ -f "$BUILD_DIR/zephyr/zmk.uf2" ]; then
+              cp "$BUILD_DIR/zephyr/zmk.uf2" "firmware_${BOARD}_${SHIELD}_${KEYMAP}.uf2"
+              echo "✅ UF2 файл создан"
+            fi
+            if [ -f "$BUILD_DIR/zephyr/zmk.hex" ]; then
+              cp "$BUILD_DIR/zephyr/zmk.hex" "firmware_${BOARD}_${SHIELD}_${KEYMAP}.hex"
+              echo "✅ HEX файл создан"
+            fi
+            if [ -f "$BUILD_DIR/zephyr/zmk.bin" ]; then
+              cp "$BUILD_DIR/zephyr/zmk.bin" "firmware_${BOARD}_${SHIELD}_${KEYMAP}.bin"
+              echo "✅ BIN файл создан"
+            fi
           done
+          
+          # Создаем список собранных файлов
+          ls -la firmware_* 2>/dev/null || echo "Файлы прошивки не найдены"
+          
+          # Сохраняем список файлов для следующего шага
+          echo "firmware_files=$(ls firmware_* 2>/dev/null | tr '\n' ' ')" >> $GITHUB_OUTPUT
+
+      - name: Upload Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            firmware_*
+            build_*/zephyr/zmk.*
+          retention-days: 7
+
+      - name: List Artifacts
+        run: |
+          echo "Собранные файлы:"
+          ls -la firmware_* 2>/dev/null || echo "Файлы прошивки не найдены"
