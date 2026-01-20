@@ -12,102 +12,101 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Prepare and Build
-        id: build
+      - name: Setup ZMK
         run: |
-          # Инициализация ZMK
           west init -l config
           west update
           west zephyr-export
-          
-          # Чтение конфигурации из build.yaml
-          MATRIX_JSON=$(python3 -c "import yaml, json, sys; print(json.dumps(yaml.safe_load(sys.stdin)['include']))" < build.yaml)
-          
-          # Переменная для хранения путей к артефактам
-          ARTIFACT_PATHS=""
-          
-          echo "$MATRIX_JSON" | jq -c '.[]' | while read -r TARGET; do
-            BOARD=$(echo "$TARGET" | jq -r '.board')
-            SHIELD=$(echo "$TARGET" | jq -r '.shield // ""')
-            KEYMAP=$(echo "$TARGET" | jq -r '.keymap // ""')
-            
-            # Создаем уникальное имя для директории сборки
-            BUILD_DIR_NAME="build_${BOARD}"
-            if [ -n "$SHIELD" ]; then
-              BUILD_DIR_NAME="${BUILD_DIR_NAME}_${SHIELD}"
-            fi
-            if [ -n "$KEYMAP" ] && [ "$KEYMAP" != "default" ]; then
-              BUILD_DIR_NAME="${BUILD_DIR_NAME}_${KEYMAP}"
-            fi
-            
-            echo "🔧 Сборка: BOARD=$BOARD, SHIELD=$SHIELD, KEYMAP=$KEYMAP"
-            echo "📁 Директория сборки: $BUILD_DIR_NAME"
-            
-            # Команда сборки
-            CMD="west build -s zmk/app -b $BOARD --build-dir $BUILD_DIR_NAME -- -DZMK_CONFIG=$(pwd)/config"
-            [ -n "$SHIELD" ] && CMD="$CMD -DSHIELD=$SHIELD"
-            [ -n "$KEYMAP" ] && CMD="$CMD -DKEYMAP=$KEYMAP"
-            
-            echo "🚀 Выполняем: $CMD"
-            eval $CMD
-            
-            # Проверяем созданные файлы
-            echo "📋 Содержимое $BUILD_DIR_NAME/zephyr/:"
-            ls -la "$BUILD_DIR_NAME/zephyr/" || echo "Директория не найдена"
-            
-            # Ищем файлы прошивки
-            for ext in uf2 hex bin; do
-              FIRMWARE_FILE="$BUILD_DIR_NAME/zephyr/zmk.$ext"
-              if [ -f "$FIRMWARE_FILE" ]; then
-                echo "✅ Найден файл прошивки: $FIRMWARE_FILE"
-                # Копируем с понятным именем
-                OUTPUT_NAME="firmware_${BOARD}"
-                [ -n "$SHIELD" ] && OUTPUT_NAME="${OUTPUT_NAME}_${SHIELD}"
-                [ -n "$KEYMAP" ] && OUTPUT_NAME="${OUTPUT_NAME}_${KEYMAP}"
-                OUTPUT_NAME="${OUTPUT_NAME}.$ext"
-                
-                cp "$FIRMWARE_FILE" "$OUTPUT_NAME"
-                echo "📄 Скопирован как: $OUTPUT_NAME"
-                ARTIFACT_PATHS="$ARTIFACT_PATHS $OUTPUT_NAME"
-              fi
-            done
-            
-            echo "---"
-          done
-          
-          # Выводим список всех созданных файлов
-          echo "📦 Итоговые файлы прошивки:"
-          ls -la firmware_* 2>/dev/null || echo "⚠️ Файлы прошивки не найдены"
-          
-          # Сохраняем список для отладки
-          echo "ARTIFACTS_FOUND=$(ls firmware_* 2>/dev/null | wc -l)" >> $GITHUB_ENV
 
-      - name: Debug - List All Files
+      - name: Build Left Side
         run: |
-          echo "📁 Содержимое рабочей директории:"
-          find . -type f -name "*.uf2" -o -name "*.hex" -o -name "*.bin" | head -20
-          echo ""
-          echo "📁 Содержимое корня:"
-          ls -la
-          echo ""
-          echo "📁 Содержимое с build:"
-          find . -type d -name "build_*" | head -5
+          echo "🔨 Building left side..."
+          west build -s zmk/app -b nice_nano_v2 \
+            --build-dir build_left \
+            -- -DSHIELD=corne_left \
+               -DKEYMAP=corne_test \
+               -DZMK_CONFIG="$(pwd)/config"
 
-      - name: Upload Firmware Artifacts
+      - name: Build Right Side
+        run: |
+          echo "🔨 Building right side..."
+          west build -s zmk/app -b nice_nano_v2 \
+            --build-dir build_right \
+            -- -DSHIELD=corne_right \
+               -DKEYMAP=corne_test \
+               -DZMK_CONFIG="$(pwd)/config"
+
+      - name: Prepare UF2 Files
+        run: |
+          # Создаем временную директорию для файлов
+          mkdir -p firmware_files
+          
+          # Копируем только UF2 файлы
+          if [ -f "build_left/zephyr/zmk.uf2" ]; then
+            cp "build_left/zephyr/zmk.uf2" "firmware_files/corne_left.uf2"
+            echo "✅ Left firmware: corne_left.uf2"
+          else
+            echo "❌ Left firmware not found!"
+            ls -la build_left/zephyr/ || echo "build_left directory doesn't exist"
+          fi
+          
+          if [ -f "build_right/zephyr/zmk.uf2" ]; then
+            cp "build_right/zephyr/zmk.uf2" "firmware_files/corne_right.uf2"
+            echo "✅ Right firmware: corne_right.uf2"
+          else
+            echo "❌ Right firmware not found!"
+            ls -la build_right/zephyr/ || echo "build_right directory doesn't exist"
+          fi
+          
+          # Проверяем, что файлы созданы
+          echo "📋 Created files:"
+          ls -la firmware_files/
+
+      - name: Create ZIP Archive
+        run: |
+          # Создаем архив с датой в имени
+          DATE=$(date +'%Y%m%d_%H%M%S')
+          ZIP_NAME="corne_firmware_${DATE}.zip"
+          
+          # Переходим в директорию с файлами
+          cd firmware_files
+          
+          # Создаем ZIP архив
+          if [ "$(ls -1 *.uf2 2>/dev/null | wc -l)" -gt 0 ]; then
+            zip "../${ZIP_NAME}" *.uf2
+            echo "📦 Created archive: ${ZIP_NAME}"
+            echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
+          else
+            echo "⚠️ No UF2 files found to archive!"
+            ls -la
+            exit 1
+          fi
+          
+          cd ..
+
+      - name: Upload Firmware Archive
         uses: actions/upload-artifact@v4
-        if: env.ARTIFACTS_FOUND > 0
         with:
-          name: zmk-firmware
+          name: corne-firmware
           path: |
-            firmware_*
+            corne_firmware_*.zip
           retention-days: 90
 
-      - name: Upload Build Logs
-        uses: actions/upload-artifact@v4
-        if: always()
+      - name: Create GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
         with:
-          name: build-logs
-          path: |
-            build_*/zephyr/.config
-            build_*/build.log
-          retention-days: 7
+          files: corne_firmware_*.zip
+          body: |
+            Firmware for Corne keyboard with OLED and RGB underglow
+            
+            ## Flash instructions:
+            1. Connect keyboard in bootloader mode (double-tap reset)
+            2. Copy `.uf2` files to the USB drive
+            3. Left side: `corne_left.uf2`
+            4. Right side: `corne_right.uf2`
+            
+            ## Features:
+            - OLED display support
+            - RGB underglow
+            - Encoder support on both sides
