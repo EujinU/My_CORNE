@@ -3,3 +3,5 @@ name: Build
 jobs:
   build:
     uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@main
+    with:
+      container-image: "zmkfirmware/zmk-build-arm:stable"  # Явно указываем стабильный тег
