@@ -1,7 +1,41 @@
 on: [push, pull_request, workflow_dispatch]
 name: Build
+
 jobs:
   build:
-    uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@main
-    with:
-      container-image: "zmkfirmware/zmk-build-arm:stable"  # Явно указываем стабильный тег
+    runs-on: ubuntu-latest
+    container:
+      # Используем стабильный тег образа, чтобы избежать ошибок с Python
+      image: zmkfirmware/zmk-build-arm:stable
+    name: Build Firmware
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build
+        uses: zmkfirmware/zmk/.github/actions/build-firmware@main
+        with:
+          board: ${{ matrix.board }}
+          shield: ${{ matrix.shield }}
+          keymap: ${{ matrix.keymap }}
+        env:
+          # Ключевая настройка: указываем путь к вашей конфигурации
+          ZMK_CONFIG: ${{ github.workspace }}/config
+
+  setup-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Generate Build Matrix
+        id: matrix
+        run: |
+          # Этот скрипт читает ваш build.yaml и создаёт матрицу для сборки
+          python3 -c "
+          import yaml, json, sys
+          with open('build.yaml') as f:
+              data = yaml.safe_load(f)
+          print('matrix=' + json.dumps(data['include']))
+          " >> $GITHUB_OUTPUT
