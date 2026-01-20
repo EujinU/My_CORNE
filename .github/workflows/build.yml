@@ -72,7 +72,10 @@ jobs:
       - name: Force Clean Update
         run: |
           rm -rf ~/.cache/west/
-          west init -l config --mf west.yml
+          # Удаляем каталоги, созданные предыдущей инициализацией west
+          rm -rf modules/ tools/ zephyr/ bootloader/ zmk/ .west/
+          # Инициализируем заново с принудительным обновлением
+          west init -l config --mf west.yml --force
           west update --fetch=always
       
       - name: West Zephyr export
