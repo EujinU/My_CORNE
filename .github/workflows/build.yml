@@ -5,12 +5,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: zmkfirmware/zmk-build-arm:3.5
+      image: zmkfirmware/zmk-build-arm:3.2  # Используем более старую версию
     name: Build Firmware
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Install missing Python dependencies
+        run: |
+          # Устанавливаем недостающие зависимости
+          apt-get update
+          apt-get install -y python3-distutils
+          python3 -m pip install -U pip setuptools
 
       - name: Setup ZMK
         run: |
@@ -18,95 +25,56 @@ jobs:
           west update
           west zephyr-export
 
-      - name: Build Left Side
+      - name: Build Both Sides
         run: |
           echo "🔨 Building left side..."
           west build -s zmk/app -b nice_nano_v2 \
             --build-dir build_left \
             -- -DSHIELD=corne_left \
-               -DKEYMAP=corne_test \
                -DZMK_CONFIG="$(pwd)/config"
-
-      - name: Build Right Side
-        run: |
+          
           echo "🔨 Building right side..."
           west build -s zmk/app -b nice_nano_v2 \
             --build-dir build_right \
             -- -DSHIELD=corne_right \
-               -DKEYMAP=corne_test \
                -DZMK_CONFIG="$(pwd)/config"
+          
+          # Проверяем созданные файлы
+          echo "📋 Files in build_left:"
+          find build_left -name "*.uf2" -o -name "zmk.*" | head -10
+          
+          echo "📋 Files in build_right:"
+          find build_right -name "*.uf2" -o -name "zmk.*" | head -10
 
       - name: Prepare UF2 Files
         run: |
-          # Создаем временную директорию для файлов
-          mkdir -p firmware_files
+          # Создаем директорию для артефактов
+          mkdir -p firmware
           
-          # Копируем только UF2 файлы
+          # Копируем UF2 файлы
           if [ -f "build_left/zephyr/zmk.uf2" ]; then
-            cp "build_left/zephyr/zmk.uf2" "firmware_files/corne_left.uf2"
-            echo "✅ Left firmware: corne_left.uf2"
+            cp "build_left/zephyr/zmk.uf2" "firmware/corne_left.uf2"
+            echo "✅ Left: firmware/corne_left.uf2"
           else
-            echo "❌ Left firmware not found!"
-            ls -la build_left/zephyr/ || echo "build_left directory doesn't exist"
+            echo "❌ Left UF2 not found!"
+            ls -la build_left/zephyr/ || true
           fi
           
           if [ -f "build_right/zephyr/zmk.uf2" ]; then
-            cp "build_right/zephyr/zmk.uf2" "firmware_files/corne_right.uf2"
-            echo "✅ Right firmware: corne_right.uf2"
+            cp "build_right/zephyr/zmk.uf2" "firmware/corne_right.uf2"
+            echo "✅ Right: firmware/corne_right.uf2"
           else
-            echo "❌ Right firmware not found!"
-            ls -la build_right/zephyr/ || echo "build_right directory doesn't exist"
+            echo "❌ Right UF2 not found!"
+            ls -la build_right/zephyr/ || true
           fi
           
-          # Проверяем, что файлы созданы
-          echo "📋 Created files:"
-          ls -la firmware_files/
+          echo "📦 Все файлы:"
+          ls -la firmware/
 
-      - name: Create ZIP Archive
-        run: |
-          # Создаем архив с датой в имени
-          DATE=$(date +'%Y%m%d_%H%M%S')
-          ZIP_NAME="corne_firmware_${DATE}.zip"
-          
-          # Переходим в директорию с файлами
-          cd firmware_files
-          
-          # Создаем ZIP архив
-          if [ "$(ls -1 *.uf2 2>/dev/null | wc -l)" -gt 0 ]; then
-            zip "../${ZIP_NAME}" *.uf2
-            echo "📦 Created archive: ${ZIP_NAME}"
-            echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
-          else
-            echo "⚠️ No UF2 files found to archive!"
-            ls -la
-            exit 1
-          fi
-          
-          cd ..
-
-      - name: Upload Firmware Archive
+      - name: Upload Firmware
         uses: actions/upload-artifact@v4
         with:
           name: corne-firmware
-          path: |
-            corne_firmware_*.zip
+          path: firmware/
+          if-no-files-found: error
           retention-days: 90
-
-      - name: Create GitHub Release (on tag)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: corne_firmware_*.zip
-          body: |
-            Firmware for Corne keyboard with OLED and RGB underglow
-            
-            ## Flash instructions:
-            1. Connect keyboard in bootloader mode (double-tap reset)
-            2. Copy `.uf2` files to the USB drive
-            3. Left side: `corne_left.uf2`
-            4. Right side: `corne_right.uf2`
-            
-            ## Features:
-            - OLED display support
-            - RGB underglow
-            - Encoder support on both sides
